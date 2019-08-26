@@ -1,0 +1,66 @@
+FROM amazonlinux:1
+
+RUN yum update && \
+    yum groupinstall -y "Development Tools" && \
+    yum install -y wget
+
+WORKDIR /root/packages
+RUN wget -q https://s3-us-west-2.amazonaws.com/aws-efa-installer/aws-efa-installer-latest.tar.gz && \
+    tar -xf aws-efa-installer-latest.tar.gz && \
+    cd aws-efa-installer && \
+    chmod +x efa_installer.sh && \
+    ./efa_installer.sh -y && \
+    cd .. && \
+    rm -rf aws-efa-installer && \
+    rm aws-efa-installer-latest.tar.gz
+
+WORKDIR /root/packages
+RUN wget -q https://developer.nvidia.com/compute/cuda/10.0/Prod/local_installers/cuda_10.0.130_410.48_linux && \
+    chmod +x cuda_10.0.130_410.48_linux && \
+    ./cuda_10.0.130_410.48_linux --silent --override --toolkit --samples --no-opengl-libs && \
+    rm cuda_10.0.130_410.48_linux
+
+WORKDIR /root/packages
+RUN git clone https://github.com/NVIDIA/nccl.git && \
+    cd nccl && \
+    git checkout dev/kwen/multi-socket && \
+    make -j src.build && \
+    make pkg.txz.build && \
+    cd build/pkg/txz && \
+    tar xvfJ nccl_2.3.5-5+cuda10.0_x86_64.txz && \
+    cp -r nccl_2.3.5-5+cuda10.0_x86_64/* /usr/local/cuda-10.0
+
+RUN update-alternatives --set gcc "/usr/bin/gcc48" && \
+    update-alternatives --set g++ "/usr/bin/g++48"
+
+WORKDIR /root/package
+RUN wget -q https://github.com/bazelbuild/bazel/releases/download/0.20.0/bazel-0.20.0-installer-linux-x86_64.sh && \
+    chmod +x bazel-0.20.0-installer-linux-x86_64.sh && ./bazel-0.20.0-installer-linux-x86_64.sh
+
+
+WORKDIR /root/package
+RUN curl -O https://bootstrap.pypa.io/get-pip.py && \
+    python get-pip.py
+
+RUN pip install six numpy wheel setuptools mock && \
+    pip install keras_applications==1.0.6 --no-deps && \
+    pip install keras_preprocessing==1.0.5 --no-deps
+
+WORKDIR /root/package
+COPY nccl_ofi_aws_patched.tar .
+RUN tar -xf nccl_ofi_aws_patched.tar && \
+    cd aws-ofi-nccl && \
+    ./autogen.sh && \
+    ./configure --with-mpi=/opt/amazon/efa --with-libfabric=/opt/amazon/efa/ --with-cuda=/usr/local/cuda --with-nccl=/usr/local/cuda && \
+    LDFLAGS="-L/opt/amazon/efa/lib64" make MPI=1 MPI_HOME=/opt/amazon/efa/ CUDA_HOME=/usr/local/cuda NCCL_HOME=/usr/local/cuda && \
+    make install
+
+WORKDIR /root/package
+RUN git clone https://github.com/NVIDIA/nccl-tests.git && \
+    cd nccl-tests && \
+    make MPI=1 MPI_HOME=/opt/amazon/efa/ CUDA_HOME=/usr/local/cuda NCCL_HOME=/usr/local/cuda && \
+
+
+#WORKDIR /root/package
+#RUN git clone https://github.com/tensorflow/tensorflow.git && \
+#    cd tensorflow && git checkout r1.13
